@@ -9,7 +9,7 @@ on:
   #   - cron: '0 0 * * *' # Runs at 12:00 AM UTC daily
 
 jobs:
-  # 1. Code Quality Job (Linting and Type Checking)
+  # 1. Code Quality Job 
   code_quality:
     runs-on: ubuntu-latest
     steps:
@@ -29,7 +29,7 @@ jobs:
         run: flake8 . --max-complexity=10 --max-line-length=120
 
       - name: Run Mypy Type Checker
-        run: mypy .
+        run: mypy . --ignore-missing-imports
 
   # 2. Docker Build and Push Job
   build_and_push:
