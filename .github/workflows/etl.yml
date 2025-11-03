@@ -29,7 +29,7 @@ jobs:
         run: flake8 . --max-complexity=10 --max-line-length=120
 
       - name: Run Mypy Type Checker
-        run: mypy . --ignore-missing-imports
+        run: mypy . 
 
   # 2. Docker Build and Push Job
   build_and_push:
