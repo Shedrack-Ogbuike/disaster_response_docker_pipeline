@@ -1,0 +1,31 @@
+version: '3.8'
+services:
+  # 1. PostgreSQL Database Service
+  db:
+    image: postgres:15-alpine
+    container_name: postgres_db
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  # 2. ETL Application Service
+  etl_app:
+    build: . # Build using the Dockerfile in the current directory
+    container_name: disaster_etl
+    depends_on:
+      - db # Ensure the database is running before the ETL job starts
+    environment:
+      POSTGRES_HOST: db # IMPORTANT: Uses the service name 'db' for the hostname
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+      FEMA_API_KEY: ${FEMA_API_KEY}
+    # command: python etl_pipeline.py # The CMD in the Dockerfile handles this
+
+volumes:
+  postgres_data:
