@@ -1,0 +1,47 @@
+# ==========================
+# Python
+# ==========================
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.env
+venv/
+.env
+*.egg-info/
+*.egg
+
+# ==========================
+# Jupyter Notebooks
+# ==========================
+.ipynb_checkpoints/
+
+# ==========================
+# Docker
+# ==========================
+*.log
+docker-compose.override.yml
+*.tar
+*.tmp
+docker_build/
+
+# ==========================
+# IDE / Editor
+# ==========================
+.vscode/
+.idea/
+*.sublime-workspace
+*.sublime-project
+
+# ==========================
+# OS-specific
+# ==========================
+.DS_Store
+Thumbs.db
+
+# ==========================
+# Secrets / Config
+# ==========================
+credentials.json
+config.yml
+secrets/
