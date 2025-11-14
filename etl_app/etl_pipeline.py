@@ -1,179 +1,202 @@
 import os
-import requests
+import pandas as pd
 import psycopg2
+import requests
 import time
-# import json
+import hashlib
+import json
 from datetime import datetime
+from contextlib import contextmanager
 
-# --- Configuration ---
-POSTGRES_HOST = os.getenv("POSTGRES_HOST", "localhost")
-POSTGRES_DB = os.getenv("POSTGRES_DB", "postgres")
-POSTGRES_USER = os.getenv("POSTGRES_USER", "postgres")
-POSTGRES_PASSWORD = os.getenv("POSTGRES_PASSWORD", "password")
-FEMA_API_KEY = os.getenv("FEMA_API_KEY")
-API_URL = "https://www.fema.gov/api/open/v2/PublicAssistanceFundedProjectsDetails"
-MAX_RETRIES = 5
-RETRY_DELAY_SECONDS = 5
+# --- CONFIGURATION ---
+DB_CONFIG = {
+    "host": os.getenv("POSTGRES_HOST", "postgres_db"),
+    "database": os.getenv("POSTGRES_DB", "disaster_db"),
+    "user": os.getenv("POSTGRES_USER", "postgres"),
+    "password": os.getenv("POSTGRES_PASSWORD", "Students28")
+}
 
-FALLBACK_DATA = [
-    {
-        "id": "123456789",
-        "femaDeclarationNumber": "DR-4500-TX",
-        "projectAmount": 50000.50,
-        "projectDescription": "Repair of Municipal Water Line damaged by flood.",
-        "state": "TX",
-        "fundingAgency": "FEMA"
-    },
-    {
-        "id": "987654321",
-        "femaDeclarationNumber": "EM-3456-CA",
-        "projectAmount": 12500.00,
-        "projectDescription": "Debris removal from State Highway after earthquake.",
-        "state": "CA",
-        "fundingAgency": "FEMA"
-    }
-]
+FEMA_API_BASE_URL = "https://www.fema.gov/api/open/v2/DisasterDeclarationsSummaries"
+PUBLIC_ASSISTANCE_URL = "https://www.fema.gov/api/open/v2/PublicAssistanceFundedProjectsDetails"
 
-
-def get_db_connection():
-    """Establish connection to PostgreSQL."""
-    print(f"Connecting to PostgreSQL at {POSTGRES_HOST}...")
+# --- DATABASE CONNECTION ---
+@contextmanager
+def get_db_cursor():
     conn = None
-    for i in range(MAX_RETRIES):
-        try:
-            conn = psycopg2.connect(
-                host=POSTGRES_HOST,
-                database=POSTGRES_DB,
-                user=POSTGRES_USER,
-                password=POSTGRES_PASSWORD,
-                connect_timeout=10
-            )
-            print("Database connection successful.")
-            return conn
-        except psycopg2.Error as e:
-            print(f"Attempt {i+1} failed: {e}")
-            if i < MAX_RETRIES - 1:
-                time.sleep(RETRY_DELAY_SECONDS)
-            else:
-                raise e
-
-
-def create_table_if_not_exists(conn):
-    """Ensure the target table exists before inserting data."""
-    create_table_sql = """
-    CREATE TABLE IF NOT EXISTS public_assistance_projects (
-        id TEXT PRIMARY KEY,
-        fema_declaration_number TEXT,
-        project_amount FLOAT,
-        project_description TEXT,
-        state TEXT,
-        funding_agency TEXT,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    );
-    """
+    cursor = None
     try:
-        with conn.cursor() as cur:
-            cur.execute(create_table_sql)
-            conn.commit()
-            print("Ensured table 'public_assistance_projects' exists.")
-    except psycopg2.Error as e:
-        conn.rollback()
-        print(f"Error creating table: {e}")
-
-
-def fetch_public_assistance_data(api_url):
-    """Fetch Public Assistance Funded Projects from FEMA API, fallback to hardcoded data if API fails."""
-    query_string = "$select=femaDeclarationNumber,projectAmount,projectDescription,state,fundingAgency,id&$top=1000"
-    full_url = f"{api_url}?{query_string}"
-    print(f"Attempting to fetch data from FEMA API: {full_url}")
-    try:
-        response = requests.get(full_url, timeout=10)
-        response.raise_for_status()
-        data = response.json()
-        records = data.get('PublicAssistanceFundedProjectsDetails', [])
-        if not records:
-            print("API returned successfully, but 0 records were returned. Using fallback data.")
-            return FALLBACK_DATA
-        print(f"Fetched {len(records)} records successfully from API.")
-        return records
-    except requests.RequestException as e:
-        print(f"Error fetching API data ({e}). Falling back to hardcoded test data.")
-        return FALLBACK_DATA
-
-
-def transform_data(records):
-    """Transform and clean the fetched data."""
-    transformed_records = []
-    for record in records:
-        try:
-            transformed_records.append(record)
-        except Exception as e:
-            print(f"Skipping record due to transformation error: {e}")
-    return transformed_records
-
-
-def load_data(conn, records):
-    """Load data into PostgreSQL table."""
-    if not records:
-        print("No records to load.")
-        return
-
-    insert_count = 0
-    sql = """
-    INSERT INTO public_assistance_projects (
-        id, fema_declaration_number, project_amount, project_description, state, funding_agency, created_at
-    ) VALUES (%s, %s, %s, %s, %s, %s, %s)
-    ON CONFLICT (id) DO UPDATE SET
-        fema_declaration_number = EXCLUDED.fema_declaration_number,
-        project_amount = EXCLUDED.project_amount,
-        project_description = EXCLUDED.project_description,
-        state = EXCLUDED.state,
-        funding_agency = EXCLUDED.funding_agency,
-        updated_at = NOW();
-    """
-    try:
-        with conn.cursor() as cur:
-            for record in records:
-                try:
-                    cur.execute(sql, (
-                        record.get('id'),
-                        record.get('femaDeclarationNumber'),
-                        record.get('projectAmount'),
-                        record.get('projectDescription'),
-                        record.get('state'),
-                        record.get('fundingAgency'),
-                        datetime.now()
-                    ))
-                    insert_count += 1
-                except psycopg2.Error as e:
-                    print(f"Error inserting record {record.get('id')}: {e}")
-            conn.commit()
-            print(f"Loaded {insert_count} records into public_assistance_projects.")
-    except psycopg2.Error as e:
-        conn.rollback()
-        print(f"Transaction failed: {e}")
+        for attempt in range(5):
+            try:
+                conn = psycopg2.connect(**DB_CONFIG)
+                conn.autocommit = False
+                break
+            except psycopg2.OperationalError as e:
+                if attempt < 4:
+                    time.sleep(2 ** attempt)
+                else:
+                    raise e
+        cursor = conn.cursor()
+        yield cursor
+        conn.commit()
+    except Exception as e:
+        if conn:
+            print(f"❌ Transaction error: {e} - rolling back")
+            conn.rollback()
+        raise
     finally:
+        if cursor:
+            cursor.close()
         if conn:
             conn.close()
-            print("Database connection closed.")
 
+# --- HASH FUNCTION ---
+def generate_hash(record):
+    record_str = json.dumps(record, sort_keys=True, default=str)
+    return hashlib.md5(record_str.encode()).hexdigest()
 
-def main():
-    print("--- Starting FEMA Public Assistance ETL Job ---")
-    raw_data = fetch_public_assistance_data(API_URL)
-    if not raw_data:
-        print("ETL aborted: no data fetched.")
-        return
-    transformed_data = transform_data(raw_data)
+# --- CLEAN RECORD ---
+def clean_record_for_insertion(record: dict) -> dict:
+    cleaned_record = record.copy()
+    field_max_lengths = {
+        'declarationType': 50, 'state': 50, 'stateName': 100, 'countyName': 200,
+        'incidentType': 200, 'declarationTitle': 500, 'pwNumber': 100, 'applicationTitle': 500,
+        'applicantId': 100, 'damageCategoryCode': 50, 'damageCategoryDescrip': 500,
+        'projectStatus': 100, 'projectProcessStep': 200, 'gmProjectId': 100, 'gmApplicantId': 100,
+        'incidentBeginDate': 50, 'fyDeclared': 10
+    }
+    for key, value in cleaned_record.items():
+        if pd.isna(value) or value in ['NaT', 'nan', 'None', '']:
+            cleaned_record[key] = None
+        elif isinstance(value, str) and key in field_max_lengths:
+            cleaned_record[key] = value[:field_max_lengths[key]] if len(value) > field_max_lengths[key] else value
+    return cleaned_record
+
+# --- DATA FETCHING ---
+def fetch_data(limit: int, offset: int) -> pd.DataFrame:
+    params = {"$top": limit, "$skip": offset}
     try:
-        conn = get_db_connection()
-        create_table_if_not_exists(conn)  # <-- This line ensures the table exists
-        load_data(conn, transformed_data)
+        response = requests.get(FEMA_API_BASE_URL, params=params, timeout=10)
+        response.raise_for_status()
+        data = response.json().get("DisasterDeclarationsSummaries", [])
+        if not data:
+            return pd.DataFrame()
+        df = pd.DataFrame(data)
+        date_fields = ['declarationDate', 'firstObligationDate', 'lastObligationDate', 'incidentBeginDate']
+        for field in date_fields:
+            df[field] = pd.to_datetime(df.get(field, None), errors='coerce').where(lambda x: x.notna(), None)
+        numeric_fields = ['projectAmount', 'federalShareObligated', 'totalObligated', 'mitigationAmount']
+        for field in numeric_fields:
+            df[field] = pd.to_numeric(df.get(field, 0), errors='coerce').fillna(0)
+        boolean_fields = ['ihProgramDeclared', 'iaProgramDeclared', 'paProgramDeclared', 'hmProgramDeclared']
+        for field in boolean_fields:
+            df[field] = df.get(field, False).replace({'Y': True, 'N': False}).astype(bool)
+        df['stateName'] = df.get('state', '')
+        df['countyName'] = df.get('designatedArea', '').str.replace(r'\s+\(County\)', '', regex=True).str.strip()
+        df['fyDeclared'] = pd.to_numeric(df.get('fyDeclared', 0), errors='coerce').fillna(0).astype(int)
+        for col in ['disasterNumber', 'declarationType', 'state', 'stateName', 'countyName',
+                    'incidentType', 'declarationTitle', 'pwNumber', 'applicationTitle',
+                    'applicantId', 'damageCategoryCode', 'damageCategoryDescrip',
+                    'projectStatus', 'projectProcessStep', 'gmProjectId', 'gmApplicantId']:
+            if col not in df.columns:
+                df[col] = ''
+        return df
     except Exception as e:
-        print(f"Critical error: {e}")
-    print("--- ETL Job Finished ---")
+        print(f"❌ Error fetching data: {e}")
+        return pd.DataFrame()
 
+def fetch_public_assistance_data(limit: int, offset: int) -> pd.DataFrame:
+    params = {"$top": limit, "$skip": offset}
+    try:
+        response = requests.get(PUBLIC_ASSISTANCE_URL, params=params, timeout=30)
+        response.raise_for_status()
+        data = response.json().get("PublicAssistanceFundedProjectsDetails", [])
+        if not data:
+            return pd.DataFrame()
+        df = pd.DataFrame(data)
+        date_fields = ['declarationDate', 'lastObligationDate', 'firstObligationDate', 'lastRefresh']
+        for field in date_fields:
+            df[field] = pd.to_datetime(df.get(field, None), errors='coerce').where(lambda x: x.notna(), None)
+        numeric_fields = ['projectAmount', 'federalShareObligated', 'totalObligated', 'mitigationAmount']
+        for field in numeric_fields:
+            df[field] = pd.to_numeric(df.get(field, 0), errors='coerce').fillna(0)
+        for col in ['disasterNumber', 'incidentType', 'pwNumber', 'applicationTitle', 'applicantId',
+                    'damageCategoryCode', 'damageCategoryDescrip', 'projectStatus', 'projectProcessStep',
+                    'projectSize', 'county', 'countyCode', 'stateAbbreviation', 'stateNumberCode',
+                    'gmProjectId', 'gmApplicantId']:
+            if col not in df.columns:
+                df[col] = ''
+        return df
+    except Exception as e:
+        print(f"❌ Error fetching public assistance data: {e}")
+        return pd.DataFrame()
+
+# --- BATCH INSERTION ---
+def batch_insert(cursor, table: str, records: list, unique_keys: list):
+    if not records:
+        return 0
+    cleaned = [clean_record_for_insertion(r) for r in records]
+    columns = cleaned[0].keys()
+    values = [[r.get(c) for c in columns] for r in cleaned]
+    placeholders = ', '.join([f"%({c})s" for c in columns])
+    conflict_clause = ', '.join(unique_keys)
+    update_clause = ', '.join([f"{c}=EXCLUDED.{c}" for c in columns if c not in unique_keys])
+    sql = f"""
+        INSERT INTO {table} ({', '.join(columns)})
+        VALUES ({placeholders})
+        ON CONFLICT ({conflict_clause}) DO UPDATE
+        SET {update_clause};
+    """
+    cursor.executemany(sql, cleaned)
+    return len(cleaned)
+
+def process_declarations_in_batches():
+    records_loaded = 0
+    page_size = 100
+    offset = 0
+    print("=== LOADING BASIC DISASTER DECLARATIONS ===")
+    while True:
+        df = fetch_data(page_size, offset)
+        if df.empty:
+            break
+        with get_db_cursor() as cursor:
+            for r in df.to_dict(orient='records'):
+                r['hash'] = generate_hash(r)
+            loaded = batch_insert(cursor, 'declarations', df.to_dict(orient='records'), ['disaster_number'])
+        records_loaded += loaded
+        print(f"✅ Loaded {loaded} declaration records (offset {offset})")
+        if len(df) < page_size:
+            break
+        offset += page_size
+        time.sleep(1)
+    return records_loaded
+
+def process_public_assistance_in_batches():
+    records_loaded = 0
+    page_size = 100
+    offset = 0
+    print("=== LOADING PUBLIC ASSISTANCE FINANCIAL DATA ===")
+    while True:
+        df = fetch_public_assistance_data(page_size, offset)
+        if df.empty:
+            break
+        with get_db_cursor() as cursor:
+            for r in df.to_dict(orient='records'):
+                r['hash'] = generate_hash(r)
+            loaded = batch_insert(cursor, 'public_assistance_projects', df.to_dict(orient='records'), ['disaster_number', 'pw_number'])
+        records_loaded += loaded
+        print(f"✅ Loaded {loaded} public assistance records (offset {offset})")
+        if len(df) < page_size:
+            break
+        offset += page_size
+        time.sleep(1)
+    return records_loaded
+
+# --- MAIN ETL RUNNER ---
+def run_etl_pipeline():
+    records_loaded = process_declarations_in_batches()
+    public_assistance_loaded = process_public_assistance_in_batches()
+    print(f"\n📈 ETL Summary: {records_loaded} declarations, {public_assistance_loaded} financial projects")
 
 if __name__ == "__main__":
-    main()
+    print("🚀 Starting Disaster Analytics ETL Pipeline...")
+    run_etl_pipeline()

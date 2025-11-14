@@ -1,24 +1,18 @@
-# Use an official Python runtime as a parent image
+# Base image
 FROM python:3.11-slim
 
-# Set the working directory inside the container
-WORKDIR /usr/src/app
+# Set working directory inside the container
+WORKDIR /usr/src/etl_app
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y \
-    gcc \
-    libpq-dev \
-    && rm -rf /var/lib/apt/lists/*
+# Install dependencies
+RUN apt-get update && apt-get install -y gcc libpq-dev && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements and install Python packages
+# Copy Python dependencies and install them
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy the ETL application code
+# Copy the ETL script into the working directory
 COPY etl_app/etl_pipeline.py .
 
-# Copy any other app files if needed (optional)
-# COPY etl_app/ .   ← use this if you have other helper modules
-
-# Default command to run the ETL job
+# Default command (can be overridden in docker-compose)
 CMD ["python", "etl_pipeline.py"]
