@@ -5,7 +5,6 @@ import requests
 import time
 import hashlib
 import json
-from datetime import datetime
 from contextlib import contextmanager
 
 # --- CONFIGURATION ---
@@ -18,6 +17,7 @@ DB_CONFIG = {
 
 FEMA_API_BASE_URL = "https://www.fema.gov/api/open/v2/DisasterDeclarationsSummaries"
 PUBLIC_ASSISTANCE_URL = "https://www.fema.gov/api/open/v2/PublicAssistanceFundedProjectsDetails"
+
 
 # --- DATABASE CONNECTION ---
 @contextmanager
@@ -40,7 +40,7 @@ def get_db_cursor():
         conn.commit()
     except Exception as e:
         if conn:
-            print(f"❌ Transaction error: {e} - rolling back")
+            print(f"Transaction error: {e} - rolling back")
             conn.rollback()
         raise
     finally:
@@ -49,10 +49,12 @@ def get_db_cursor():
         if conn:
             conn.close()
 
+
 # --- HASH FUNCTION ---
 def generate_hash(record):
     record_str = json.dumps(record, sort_keys=True, default=str)
     return hashlib.md5(record_str.encode()).hexdigest()
+
 
 # --- CLEAN RECORD ---
 def clean_record_for_insertion(record: dict) -> dict:
@@ -70,6 +72,7 @@ def clean_record_for_insertion(record: dict) -> dict:
         elif isinstance(value, str) and key in field_max_lengths:
             cleaned_record[key] = value[:field_max_lengths[key]] if len(value) > field_max_lengths[key] else value
     return cleaned_record
+
 
 # --- DATA FETCHING ---
 def fetch_data(limit: int, offset: int) -> pd.DataFrame:
@@ -101,8 +104,9 @@ def fetch_data(limit: int, offset: int) -> pd.DataFrame:
                 df[col] = ''
         return df
     except Exception as e:
-        print(f"❌ Error fetching data: {e}")
+        print(f"Error fetching data: {e}")
         return pd.DataFrame()
+
 
 def fetch_public_assistance_data(limit: int, offset: int) -> pd.DataFrame:
     params = {"$top": limit, "$skip": offset}
@@ -127,8 +131,9 @@ def fetch_public_assistance_data(limit: int, offset: int) -> pd.DataFrame:
                 df[col] = ''
         return df
     except Exception as e:
-        print(f"❌ Error fetching public assistance data: {e}")
+        print(f"Error fetching public assistance data: {e}")
         return pd.DataFrame()
+
 
 # --- BATCH INSERTION ---
 def batch_insert(cursor, table: str, records: list, unique_keys: list):
@@ -136,7 +141,6 @@ def batch_insert(cursor, table: str, records: list, unique_keys: list):
         return 0
     cleaned = [clean_record_for_insertion(r) for r in records]
     columns = cleaned[0].keys()
-    values = [[r.get(c) for c in columns] for r in cleaned]
     placeholders = ', '.join([f"%({c})s" for c in columns])
     conflict_clause = ', '.join(unique_keys)
     update_clause = ', '.join([f"{c}=EXCLUDED.{c}" for c in columns if c not in unique_keys])
@@ -148,6 +152,7 @@ def batch_insert(cursor, table: str, records: list, unique_keys: list):
     """
     cursor.executemany(sql, cleaned)
     return len(cleaned)
+
 
 def process_declarations_in_batches():
     records_loaded = 0
@@ -170,6 +175,7 @@ def process_declarations_in_batches():
         time.sleep(1)
     return records_loaded
 
+
 def process_public_assistance_in_batches():
     records_loaded = 0
     page_size = 100
@@ -182,7 +188,12 @@ def process_public_assistance_in_batches():
         with get_db_cursor() as cursor:
             for r in df.to_dict(orient='records'):
                 r['hash'] = generate_hash(r)
-            loaded = batch_insert(cursor, 'public_assistance_projects', df.to_dict(orient='records'), ['disaster_number', 'pw_number'])
+            loaded = batch_insert(
+                cursor,
+                'public_assistance_projects',
+                df.to_dict(orient='records'),
+                ['disaster_number', 'pw_number']
+            )
         records_loaded += loaded
         print(f"✅ Loaded {loaded} public assistance records (offset {offset})")
         if len(df) < page_size:
@@ -191,12 +202,14 @@ def process_public_assistance_in_batches():
         time.sleep(1)
     return records_loaded
 
+
 # --- MAIN ETL RUNNER ---
 def run_etl_pipeline():
     records_loaded = process_declarations_in_batches()
     public_assistance_loaded = process_public_assistance_in_batches()
     print(f"\n📈 ETL Summary: {records_loaded} declarations, {public_assistance_loaded} financial projects")
 
+
 if __name__ == "__main__":
-    print("🚀 Starting Disaster Analytics ETL Pipeline...")
+    print(" Starting Disaster Analytics ETL Pipeline...")
     run_etl_pipeline()
