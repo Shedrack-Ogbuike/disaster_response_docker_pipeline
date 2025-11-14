@@ -52,4 +52,4 @@ jobs:
           context: . 
           push: true
           
-          tags: ${{ secrets.DOKCER_USERNAME }}/disaster-response-analytics:latest
+          tags: ${{ secrets.DOCKER_USERNAME }}/disaster-response-analytics:latest
