@@ -6,9 +6,9 @@ import time
 import hashlib
 import json
 from contextlib import contextmanager
-from datetime import datetime
 
-# --- CONFIGURATION ---
+
+#  CONFIGURATION 
 DB_CONFIG = {
     "host": os.getenv("POSTGRES_HOST"),
     "database": os.getenv("POSTGRES_DB"),
@@ -18,7 +18,7 @@ DB_CONFIG = {
 
 PUBLIC_ASSISTANCE_URL = "https://www.fema.gov/api/open/v2/PublicAssistanceFundedProjectsDetails"
 
-# --- DATABASE CONNECTION ---
+# DATABASE CONNECTION 
 @contextmanager
 def get_db_cursor():
     conn = None
@@ -47,8 +47,9 @@ def get_db_cursor():
             cursor.close()
         if conn:
             conn.close()
+            
 
-# --- HASH FUNCTION ---
+# HASH FUNCTION 
 def generate_hash(record):
     record_str = json.dumps(record, sort_keys=True, default=str)
     return hashlib.md5(record_str.encode()).hexdigest()
@@ -70,7 +71,7 @@ def clean_record_for_insertion(record: dict) -> dict:
             cleaned_record[key] = value[:field_max_lengths[key]] if len(value) > field_max_lengths[key] else value
     return cleaned_record
 
-# --- DATA FETCHING (Public Assistance Only) ---
+#  DATA FETCHING
 def fetch_public_assistance_data(limit: int, offset: int) -> pd.DataFrame:
     params = {"$top": limit, "$skip": offset}
     try:
@@ -84,7 +85,7 @@ def fetch_public_assistance_data(limit: int, offset: int) -> pd.DataFrame:
         # Convert column names to snake_case to match your database schema
         column_mapping = {
             'disasterNumber': 'disaster_number',
-            'declarationDate': 'declaration_date', 
+            'declarationDate': 'declaration_date',
             'incidentType': 'incident_type',
             'pwNumber': 'pw_number',
             'applicationTitle': 'application_title',
@@ -129,7 +130,7 @@ def fetch_public_assistance_data(limit: int, offset: int) -> pd.DataFrame:
         print(f"Error fetching public assistance data: {e}")
         return pd.DataFrame()
 
-# --- BATCH INSERTION ---
+#  BATCH INSERTION 
 def batch_insert(cursor, table: str, records: list, unique_keys: list):
     if not records:
         return 0
@@ -142,7 +143,7 @@ def batch_insert(cursor, table: str, records: list, unique_keys: list):
     """)
     existing_columns = {row[0] for row in cursor.fetchall()}
     
-    # Track skipped columns (only show unique ones)
+    # Track skipped columns 
     skipped_columns = set()
     
     # Filter records to only include existing columns and add hash_value
@@ -155,24 +156,24 @@ def batch_insert(cursor, table: str, records: list, unique_keys: list):
             else:
                 skipped_columns.add(key)
         
-        # Add hash_value if the column exists (we'll use the API's hash)
+        # Add hash_value if the column exists 
         if 'hash_value' in existing_columns and 'hash_value' in record:
             filtered_record['hash_value'] = record['hash_value']
         
         # Add timestamp fields if they exist in the table
         if 'created_at' in existing_columns and 'created_at' not in filtered_record:
-            filtered_record['created_at'] = None  # Let DB use DEFAULT NOW()
+            filtered_record['created_at'] = None  
         if 'updated_at' in existing_columns and 'updated_at' not in filtered_record:
-            filtered_record['updated_at'] = None  # Let DB use DEFAULT NOW()
+            filtered_record['updated_at'] = None  
         
         filtered_records.append(filtered_record)
     
     # Show skipped columns only once
     if skipped_columns:
-        print(f"⚠️  Skipping columns not in {table}: {sorted(skipped_columns)}")
+        print(f"Skipping columns not in {table}: {sorted(skipped_columns)}")
     
     if not filtered_records:
-        print(" No valid records to insert after filtering")
+        print("No valid records to insert after filtering")
         return 0
     
     cleaned = [clean_record_for_insertion(r) for r in filtered_records]
@@ -185,7 +186,7 @@ def batch_insert(cursor, table: str, records: list, unique_keys: list):
     
     columns = cleaned[0].keys()
     if not columns:
-        print(" No columns to insert after filtering")
+        print("No columns to insert after filtering")
         return 0
     
     placeholders = ', '.join([f"%({c})s" for c in columns])
@@ -199,11 +200,11 @@ def batch_insert(cursor, table: str, records: list, unique_keys: list):
         SET {update_clause};
     """
     
-    print(f"🔧 Inserting {len(cleaned)} records into {table} with columns: {list(columns)}")
+    print(f"Inserting {len(cleaned)} records into {table} with columns: {list(columns)}")
     cursor.executemany(sql, cleaned)
     return len(cleaned)
 
-# --- PROCESSING FUNCTION (Public Assistance Only) ---
+#  PROCESSING FUNCTION (Public Assistance Only) 
 def process_public_assistance_in_batches():
     records_loaded = 0
     page_size = 100
@@ -212,7 +213,7 @@ def process_public_assistance_in_batches():
     while True:
         df = fetch_public_assistance_data(page_size, offset)
         if df.empty:
-            print("✅ No more records to load")
+            print(" No more records to load")
             break
         
         with get_db_cursor() as cursor:
@@ -224,10 +225,10 @@ def process_public_assistance_in_batches():
             )
         
         records_loaded += loaded
-        print(f"✅ Loaded {loaded} public assistance records (offset {offset})")
+        print(f" Loaded {loaded} public assistance records (offset {offset})")
         
         if len(df) < page_size:
-            print("✅ Reached end of dataset")
+            print(" Reached end of dataset")
             break
         
         offset += page_size
@@ -235,19 +236,19 @@ def process_public_assistance_in_batches():
     
     return records_loaded
 
-# --- TRANSFORMATION FUNCTIONS ---
+# TRANSFORMATION FUNCTIONS 
 def populate_fact_tables():
     """Populate fact tables from the raw public_assistance_projects data"""
-    print("🔄 Starting fact table transformations...")
+    print("Starting fact table transformations...")
     
     with get_db_cursor() as cursor:
         try:
-            # Clear existing fact data (optional - depends on your strategy)
+            # Clear existing fact data 
             cursor.execute("TRUNCATE fact_disaster_metrics;")
             cursor.execute("TRUNCATE fact_project_samples;")
             
             # Populate fact_disaster_metrics
-            print("📊 Populating fact_disaster_metrics...")
+            print(" Populating fact_disaster_metrics...")
             cursor.execute("""
                 INSERT INTO fact_disaster_metrics (
                     disaster_number, state_abbreviation, declaration_date,
@@ -270,10 +271,10 @@ def populate_fact_tables():
             """)
             
             metrics_count = cursor.rowcount
-            print(f"✅ Loaded {metrics_count} records into fact_disaster_metrics")
+            print(f"Loaded {metrics_count} records into fact_disaster_metrics")
             
             # Populate fact_project_samples
-            print("📊 Populating fact_project_samples...")
+            print("Populating fact_project_samples...")
             cursor.execute("""
                 INSERT INTO fact_project_samples (
                     disaster_number, state_abbreviation, declaration_date,
@@ -298,12 +299,12 @@ def populate_fact_tables():
             """)
             
             samples_count = cursor.rowcount
-            print(f"✅ Loaded {samples_count} records into fact_project_samples")
+            print(f"Loaded {samples_count} records into fact_project_samples")
             
             return metrics_count, samples_count
             
         except Exception as e:
-            print(f" Error during fact table transformation: {e}")
+            print(f"Error during fact table transformation: {e}")
             raise
 
 def update_etl_control():
@@ -320,11 +321,11 @@ def update_etl_control():
                     SELECT COUNT(*) FROM public_assistance_projects
                 );
         """)
-    print("✅ Updated ETL control table")
+    print("Updated ETL control table")
 
-# --- MAIN ETL RUNNER (Enhanced with Transformations) ---
+# MAIN ETL RUNNER
 def run_etl_pipeline():
-    print("🚀 Starting Public Assistance ETL Pipeline...")
+    print("Starting Public Assistance ETL Pipeline...")
     
     try:
         # 1. EXTRACT & LOAD: Get raw data from API and load into staging
@@ -336,11 +337,11 @@ def run_etl_pipeline():
         # 3. Update ETL control
         update_etl_control()
         
-        print(f"\n📈 ETL Summary:")
-        print(f"   • {public_assistance_loaded} public assistance projects loaded")
-        print(f"   • {metrics_count} disaster metrics records created") 
-        print(f"   • {samples_count} project samples records created")
-        print("✅ ETL Pipeline completed successfully!")
+        print("\n ETL Summary:")
+        print(f"{public_assistance_loaded} public assistance projects loaded")
+        print(f"{metrics_count} disaster metrics records created") 
+        print(f"{samples_count} project samples records created")
+        print(" ETL Pipeline completed successfully!")
         
     except Exception as e:
         print(f" ETL Pipeline failed: {e}")
