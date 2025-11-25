@@ -1,0 +1,25 @@
+1. DATA SOURCES LAYER
+   ├── FEMA Public Assistance API
+   └── External Disaster Data Feeds
+
+2. INGESTION & PROCESSING LAYER  
+   ├── Docker Container (disaster_etl)
+   ├── Python ETL Pipeline
+   └── Batch Processing Engine
+
+3. STORAGE LAYER
+   ├── PostgreSQL Database
+   │   ├── Raw Data (public_assistance_projects)
+   │   ├── Fact Tables (fact_disaster_metrics, fact_project_samples)
+   │   └── Dimension Tables (dim_location, dim_date)
+   └── ETL Control & Metadata
+
+4. ANALYTICS & VISUALIZATION LAYER
+   ├── Power BI Dashboards
+   ├── SQL Query Interface
+   └── Business Intelligence Tools
+
+5. INFRASTRUCTURE & ORCHESTRATION
+   ├── Docker Compose
+   ├── GitHub Actions CI/CD
+   └── Monitoring & Logging

@@ -1,51 +1,13 @@
---- Initializing Disaster Analytics Database Schema ---
+--- Initializing Disaster Analytics Database Schema (Public Assistance Only) ---
 
--- 1. Raw Staging Table: FEMA Disaster Declarations Summaries
-DROP TABLE IF EXISTS declarations CASCADE;
-CREATE TABLE declarations (
-    disaster_number INTEGER PRIMARY KEY,
-    declaration_type VARCHAR(50),
-    declaration_date TIMESTAMP,
-    incidentbegindate VARCHAR(100),
-    state VARCHAR(20),
-    state_name VARCHAR(50),
-    county_name VARCHAR(100),
-    incident_type VARCHAR(100),
-    project_amount NUMERIC(18,2) DEFAULT 0,
-    declaration_title VARCHAR(255),
-    fy_declared INTEGER,
-    ih_program_declared BOOLEAN DEFAULT FALSE,
-    ia_program_declared BOOLEAN DEFAULT FALSE,
-    pa_program_declared BOOLEAN DEFAULT FALSE,
-    hm_program_declared BOOLEAN DEFAULT FALSE,
-    pw_number VARCHAR(50),
-    application_title VARCHAR(255),
-    applicant_id VARCHAR(50),
-    damage_category_code VARCHAR(10),
-    damage_category_descrip VARCHAR(255),
-    project_status VARCHAR(50),
-    project_process_step VARCHAR(100),
-    federal_share_obligated NUMERIC(18,2),
-    total_obligated NUMERIC(18,2),
-    last_obligation_date TIMESTAMP,
-    first_obligation_date TIMESTAMP,
-    mitigation_amount NUMERIC(18,2),
-    gm_project_id VARCHAR(50),
-    gm_applicant_id VARCHAR(50),
-    last_refresh TIMESTAMP WITH TIME ZONE,
-    hash_value VARCHAR(64),
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-);
-
--- 2. Raw Staging Table: Public Assistance Projects
+-- 1. Main Table: Public Assistance Projects (ONLY THIS TABLE NEEDED)
 DROP TABLE IF EXISTS public_assistance_projects CASCADE;
 CREATE TABLE public_assistance_projects (
     disaster_number INTEGER,
     declaration_date TIMESTAMP,
     incident_type VARCHAR(100),
     pw_number VARCHAR(50),
-    application_title VARCHAR(255),
+    application_title VARCHAR(500),
     applicant_id VARCHAR(50),
     damage_category_code VARCHAR(10),
     damage_category_descrip VARCHAR(255),
@@ -64,29 +26,20 @@ CREATE TABLE public_assistance_projects (
     mitigation_amount NUMERIC(18, 2),
     gm_project_id VARCHAR(50),
     gm_applicant_id VARCHAR(50),
-    last_refresh TIMESTAMP WITH TIME ZONE,
+    last_refresh TIMESTAMP,
     hash_value VARCHAR(64),
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW(),
     PRIMARY KEY (disaster_number, pw_number)
 );
 
--- Indexes (with DROP statements to avoid duplicates)
-DROP INDEX IF EXISTS idx_declarations_date;
-DROP INDEX IF EXISTS idx_public_assistance_disaster;
-DROP INDEX IF EXISTS idx_projects_last_refresh;
-DROP INDEX IF EXISTS idx_metrics_disaster_date;
-DROP INDEX IF EXISTS idx_samples_amount;
-
-CREATE INDEX idx_declarations_date ON declarations (declaration_date);
-CREATE INDEX idx_public_assistance_disaster ON public_assistance_projects (disaster_number);
-CREATE INDEX idx_projects_last_refresh ON public_assistance_projects (last_refresh);
-
--- 3. Power BI Optimized Tables
+-- 2. Simplified Fact Tables (Easier to populate)
 DROP TABLE IF EXISTS fact_disaster_metrics CASCADE;
 CREATE TABLE fact_disaster_metrics (
     fact_key SERIAL PRIMARY KEY,
-    disaster_key INTEGER,
-    location_key INTEGER,
-    date_key INTEGER,
+    disaster_number INTEGER,
+    state_abbreviation VARCHAR(10),
+    declaration_date TIMESTAMP,
     total_projects INTEGER,
     total_funding NUMERIC(18,2),
     avg_project_amount NUMERIC(18,2),
@@ -94,55 +47,24 @@ CREATE TABLE fact_disaster_metrics (
     small_projects INTEGER,
     medium_projects INTEGER,
     large_projects INTEGER,
-    last_updated TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+    last_updated TIMESTAMP DEFAULT NOW()
 );
 
 DROP TABLE IF EXISTS fact_project_samples CASCADE;
 CREATE TABLE fact_project_samples (
-    project_id VARCHAR(100) PRIMARY KEY,
-    disaster_key INTEGER,
-    location_key INTEGER,
-    date_key INTEGER,
+    project_id SERIAL PRIMARY KEY,
+    disaster_number INTEGER,
+    state_abbreviation VARCHAR(10),
+    declaration_date TIMESTAMP,
     project_amount NUMERIC(18,2),
     damage_category VARCHAR(100),
     project_size VARCHAR(50),
     is_large_project BOOLEAN,
     amount_category VARCHAR(20),
-    last_updated TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+    last_updated TIMESTAMP DEFAULT NOW()
 );
 
--- Performance indexes for Power BI queries
-CREATE INDEX idx_metrics_disaster_date ON fact_disaster_metrics (disaster_key, date_key);
-CREATE INDEX idx_metrics_location_date ON fact_disaster_metrics (location_key, date_key);
-CREATE INDEX idx_samples_amount ON fact_project_samples (project_amount DESC);
-CREATE INDEX idx_samples_disaster ON fact_project_samples (disaster_key);
-
--- 4. ETL Control Table for Incremental Processing
-DROP TABLE IF EXISTS etl_control CASCADE;
-CREATE TABLE etl_control (
-    control_id SERIAL PRIMARY KEY,
-    process_name VARCHAR(100) UNIQUE,
-    last_run_timestamp TIMESTAMP WITH TIME ZONE,
-    last_offset INTEGER DEFAULT 0,
-    records_processed INTEGER DEFAULT 0,
-    status VARCHAR(50) DEFAULT 'IDLE'
-);
-
-INSERT INTO etl_control (process_name, last_run_timestamp) VALUES 
-('public_assistance_projects', NOW() - INTERVAL '1 day'),
-('declarations', NOW() - INTERVAL '1 day')
-ON CONFLICT (process_name) DO NOTHING;
-
--- 5. Dimension Tables
-DROP TABLE IF EXISTS dim_disaster CASCADE;
-CREATE TABLE dim_disaster (
-    disaster_key SERIAL PRIMARY KEY,
-    disaster_number INTEGER UNIQUE,
-    declaration_type VARCHAR(255),
-    incident_type VARCHAR(225),
-    declaration_title VARCHAR(500)
-);
-
+-- 3. Dimension Tables (Keep only what you need)
 DROP TABLE IF EXISTS dim_location CASCADE;
 CREATE TABLE dim_location (
     location_key SERIAL PRIMARY KEY,
@@ -153,7 +75,7 @@ CREATE TABLE dim_location (
     UNIQUE (state, country_name)
 );
 
--- Pre-populate with US states and regions for better analytics
+-- Pre-populate with US states and regions
 INSERT INTO dim_location (state, country_name, region, division) VALUES
 ('AL', 'USA', 'South', 'East South Central'),
 ('AK', 'USA', 'West', 'Pacific'),
@@ -228,6 +150,7 @@ CREATE TABLE dim_date (
     week_of_year INT
 );
 
+-- Generate date dimension (keep as is)
 INSERT INTO dim_date (date_key, full_date, year, month, month_name, day, quarter, day_of_week, day_name, is_weekend, week_of_year)
 SELECT
     to_char(d, 'YYYYMMDD')::INT AS date_key,
@@ -243,5 +166,33 @@ SELECT
     EXTRACT(WEEK FROM d)::INT AS week_of_year
 FROM generate_series('2000-01-01', CURRENT_DATE + INTERVAL '2 years', '1 day') AS d
 ON CONFLICT (date_key) DO NOTHING;
+
+-- 4. ETL Control Table (Simplified)
+DROP TABLE IF EXISTS etl_control CASCADE;
+CREATE TABLE etl_control (
+    control_id SERIAL PRIMARY KEY,
+    process_name VARCHAR(100) UNIQUE,
+    last_run_timestamp TIMESTAMP,
+    last_offset INTEGER DEFAULT 0,
+    records_processed INTEGER DEFAULT 0,
+    status VARCHAR(50) DEFAULT 'IDLE'
+);
+
+INSERT INTO etl_control (process_name, last_run_timestamp) VALUES 
+('public_assistance_projects', NOW() - INTERVAL '1 day')
+ON CONFLICT (process_name) DO NOTHING;
+
+-- 5. Performance Indexes
+DROP INDEX IF EXISTS idx_public_assistance_disaster;
+DROP INDEX IF EXISTS idx_public_assistance_state;
+DROP INDEX IF EXISTS idx_public_assistance_date;
+DROP INDEX IF EXISTS idx_metrics_disaster_state;
+DROP INDEX IF EXISTS idx_samples_amount;
+
+CREATE INDEX idx_public_assistance_disaster ON public_assistance_projects (disaster_number);
+CREATE INDEX idx_public_assistance_state ON public_assistance_projects (state_abbreviation);
+CREATE INDEX idx_public_assistance_date ON public_assistance_projects (declaration_date);
+CREATE INDEX idx_metrics_disaster_state ON fact_disaster_metrics (disaster_number, state_abbreviation);
+CREATE INDEX idx_samples_amount ON fact_project_samples (project_amount DESC);
 
 --- Database Schema Initialization Complete ---

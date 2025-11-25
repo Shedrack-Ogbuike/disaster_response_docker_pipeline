@@ -10,6 +10,10 @@ venv/
 .env
 *.egg-info/
 *.egg
+test.py
+try.py
+test2.py
+
 
 # ==========================
 # Jupyter Notebooks
