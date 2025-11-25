@@ -118,13 +118,19 @@ def fetch_public_assistance_data(limit: int, offset: int) -> pd.DataFrame:
         df = df.rename(columns=column_mapping)
 
         # Process date fields
-        date_fields = ['declaration_date', 'last_obligation_date', 'first_obligation_date', 'last_refresh']
+        date_fields = [
+            'declaration_date', 'last_obligation_date',
+            'first_obligation_date', 'last_refresh'
+        ]
         for field in date_fields:
             if field in df.columns:
                 df[field] = pd.to_datetime(df[field], errors='coerce')
 
         # Process numeric fields
-        numeric_fields = ['project_amount', 'federal_share_obligated', 'total_obligated', 'mitigation_amount']
+        numeric_fields = [
+            'project_amount', 'federal_share_obligated',
+            'total_obligated', 'mitigation_amount'
+        ]
         for field in numeric_fields:
             if field in df.columns:
                 df[field] = pd.to_numeric(df[field], errors='coerce').fillna(0)
@@ -148,10 +154,7 @@ def batch_insert(cursor, table: str, records: list, unique_keys: list):
     """)
     existing_columns = {row[0] for row in cursor.fetchall()}
 
-    # Track skipped columns
     skipped_columns = set()
-
-    # Filter records to only include existing columns and add hash_value
     filtered_records = []
     for record in records:
         filtered_record = {}
@@ -161,11 +164,9 @@ def batch_insert(cursor, table: str, records: list, unique_keys: list):
             else:
                 skipped_columns.add(key)
 
-        # Add hash_value if the column exists
         if 'hash_value' in existing_columns and 'hash_value' in record:
             filtered_record['hash_value'] = record['hash_value']
 
-        # Add timestamp fields if they exist in the table
         if 'created_at' in existing_columns and 'created_at' not in filtered_record:
             filtered_record['created_at'] = None
         if 'updated_at' in existing_columns and 'updated_at' not in filtered_record:
@@ -173,7 +174,6 @@ def batch_insert(cursor, table: str, records: list, unique_keys: list):
 
         filtered_records.append(filtered_record)
 
-    # Show skipped columns only once
     if skipped_columns:
         print(f"Skipping columns not in {table}: {sorted(skipped_columns)}")
 
@@ -183,7 +183,6 @@ def batch_insert(cursor, table: str, records: list, unique_keys: list):
 
     cleaned = [clean_record_for_insertion(r) for r in filtered_records]
 
-    # Filter unique_keys to only those that exist
     valid_unique_keys = [key for key in unique_keys if key in existing_columns]
     if not valid_unique_keys:
         print(f"No valid unique keys found for {table}")
@@ -210,7 +209,7 @@ def batch_insert(cursor, table: str, records: list, unique_keys: list):
     return len(cleaned)
 
 
-# PROCESSING FUNCTION 
+# PROCESSING FUNCTION
 def process_public_assistance_in_batches():
     records_loaded = 0
     page_size = 100
@@ -238,23 +237,20 @@ def process_public_assistance_in_batches():
             break
 
         offset += page_size
-        time.sleep(1)  # Be nice to the API
+        time.sleep(1)
 
     return records_loaded
 
 
 # TRANSFORMATION FUNCTIONS
 def populate_fact_tables():
-    """Populate fact tables from the raw public_assistance_projects data"""
     print("Starting fact table transformations...")
 
     with get_db_cursor() as cursor:
         try:
-            # Clear existing fact data
             cursor.execute("TRUNCATE fact_disaster_metrics;")
             cursor.execute("TRUNCATE fact_project_samples;")
 
-            # Populate fact_disaster_metrics
             print("Populating fact_disaster_metrics...")
             cursor.execute("""
                 INSERT INTO fact_disaster_metrics (
@@ -280,7 +276,6 @@ def populate_fact_tables():
             metrics_count = cursor.rowcount
             print(f"Loaded {metrics_count} records into fact_disaster_metrics")
 
-            # Populate fact_project_samples
             print("Populating fact_project_samples...")
             cursor.execute("""
                 INSERT INTO fact_project_samples (
@@ -316,7 +311,6 @@ def populate_fact_tables():
 
 
 def update_etl_control():
-    """Update the ETL control table with the latest run information"""
     with get_db_cursor() as cursor:
         cursor.execute("""
             INSERT INTO etl_control (process_name, last_run_timestamp, status)
@@ -337,13 +331,8 @@ def run_etl_pipeline():
     print("Starting Public Assistance ETL Pipeline...")
 
     try:
-        # 1. EXTRACT & LOAD: Get raw data from API and load into staging
         public_assistance_loaded = process_public_assistance_in_batches()
-
-        # 2. TRANSFORM: Populate fact tables for analytics
         metrics_count, samples_count = populate_fact_tables()
-
-        # 3. Update ETL control
         update_etl_control()
 
         print("\nETL Summary:")
@@ -354,7 +343,6 @@ def run_etl_pipeline():
 
     except Exception as e:
         print(f"ETL Pipeline failed: {e}")
-        # Update ETL control with error status
         with get_db_cursor() as cursor:
             cursor.execute("""
                 INSERT INTO etl_control (process_name, last_run_timestamp, status)
